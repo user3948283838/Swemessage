@@ -15,10 +15,11 @@
         h1 { text-align: center; margin-bottom: 20px; color: #bb86fc; font-weight: 500; letter-spacing: 0.5px; }
         input { width: 100%; padding: 12px; margin-bottom: 10px; background: #2c2c2c; border: 1px solid #3c3c3c; border-radius: 6px; color: white; font-size: 14px; outline: none; }
         input:focus { border-color: #bb86fc; }
-        button { width: 100%; padding: 12px; background: #bb86fc; color: #000; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; margin-bottom: 10px; font-size: 15px; }
-        button:hover { background: #9965f4; }
+        button { width: 100%; padding: 12px; background: #bb86fc; color: #000; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; margin-bottom: 10px; font-size: 15px; transition: 0.2s; }
+        button:hover:not(:disabled) { background: #9965f4; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
         .btn-secondary { background: #3c3c3c; color: #e0e0e0; }
-        .btn-secondary:hover { background: #4c4c4c; }
+        .btn-secondary:hover:not(:disabled) { background: #4c4c4c; }
         #error-msg { color: #cf6679; text-align: center; font-size: 14px; margin-top: 10px; min-height: 20px; font-weight: 500; }
         
         #chat-screen { display: none; width: 100%; height: 100vh; max-width: 1200px; background: rgba(30, 30, 30, 0.85); backdrop-filter: blur(10px); }
@@ -63,9 +64,9 @@
         <h1>Swemessage</h1>
         <input type="text" id="regNickname" placeholder="Ваш Никнейм">
         <input type="email" id="emailInput" placeholder="Email">
-        <input type="password" id="passwordInput" placeholder="Пароль">
-        <button onclick="registerUser()">Зарегистрироваться</button>
-        <button class="btn-secondary" onclick="loginUser()">Войти</button>
+        <input type="password" id="passwordInput" placeholder="Пароль (мин. 6 символов)">
+        <button id="regBtn" onclick="registerUser()">Зарегистрироваться</button>
+        <button id="loginBtn" class="btn-secondary" onclick="loginUser()">Войти</button>
         <p id="error-msg"></p>
     </div>
 
@@ -102,7 +103,7 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, setDoc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
@@ -129,6 +130,7 @@
         let pc = null;
         let localStream = null;
         let unsubscribeCalls = null;
+        let currentAudio = null;
         const rtcConfig = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -140,36 +142,125 @@
             return 'id_' + Math.random().toString(36).substr(2, 6);
         }
 
+        // ===== РЕГИСТРАЦИЯ С ПОНЯТНЫМИ ОШИБКАМИ =====
         window.registerUser = async () => {
             const nick = document.getElementById('regNickname').value.trim();
-            const email = document.getElementById('emailInput').value;
+            const email = document.getElementById('emailInput').value.trim();
             const pass = document.getElementById('passwordInput').value;
             const errorMsg = document.getElementById('error-msg');
+            const btn = document.getElementById('regBtn');
 
-            if (!nick || !email || !pass) { errorMsg.innerText = "Заполните все поля!"; return; }
+            errorMsg.innerText = "";
+
+            if (!nick || !email || !pass) {
+                errorMsg.innerText = "⚠️ Заполни все поля!";
+                return;
+            }
+
+            if (pass.length < 6) {
+                errorMsg.innerText = "⚠️ Пароль должен быть минимум 6 символов!";
+                return;
+            }
+
+            if (!email.includes('@') || !email.includes('.')) {
+                errorMsg.innerText = "⚠️ Неправильный email!";
+                return;
+            }
+
+            btn.innerText = "⏳ Регистрация...";
+            btn.disabled = true;
 
             try {
                 const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
                 const generatedId = generateId();
                 await setDoc(doc(db, "users", userCredential.user.uid), { 
-                    email: email, displayId: nick, publicId: generatedId, createdAt: serverTimestamp(), online: true
+                    email: email, 
+                    displayId: nick, 
+                    publicId: generatedId, 
+                    createdAt: serverTimestamp(), 
+                    online: true
                 });
-            } catch (e) { errorMsg.innerText = "Ошибка: " + e.message; }
+            } catch (e) {
+                console.error("Ошибка регистрации:", e);
+                let errMsg = "Ошибка: " + e.message;
+                switch(e.code) {
+                    case 'auth/email-already-in-use':
+                        errMsg = "❌ Этот email уже зарегистрирован!";
+                        break;
+                    case 'auth/invalid-email':
+                        errMsg = "❌ Неправильный email!";
+                        break;
+                    case 'auth/weak-password':
+                        errMsg = "❌ Слабый пароль (минимум 6 символов)!";
+                        break;
+                    case 'auth/network-request-failed':
+                        errMsg = "❌ Проблема с интернетом!";
+                        break;
+                    case 'permission-denied':
+                        errMsg = "❌ Нет доступа! Проверь правила Firestore.";
+                        break;
+                }
+                errorMsg.innerText = errMsg;
+            } finally {
+                btn.innerText = "Зарегистрироваться";
+                btn.disabled = false;
+            }
         };
 
+        // ===== ВХОД =====
         window.loginUser = async () => {
-            const email = document.getElementById('emailInput').value;
+            const email = document.getElementById('emailInput').value.trim();
             const pass = document.getElementById('passwordInput').value;
-            try { await signInWithEmailAndPassword(auth, email, pass); } 
-            catch (e) { document.getElementById('error-msg').innerText = "Ошибка: " + e.message; }
+            const errorMsg = document.getElementById('error-msg');
+            const btn = document.getElementById('loginBtn');
+
+            errorMsg.innerText = "";
+
+            if (!email || !pass) {
+                errorMsg.innerText = "⚠️ Заполни email и пароль!";
+                return;
+            }
+
+            btn.innerText = "⏳ Вход...";
+            btn.disabled = true;
+
+            try { 
+                await signInWithEmailAndPassword(auth, email, pass); 
+            } catch (e) { 
+                let errMsg = "Ошибка: " + e.message;
+                switch(e.code) {
+                    case 'auth/user-not-found':
+                    case 'auth/wrong-password':
+                    case 'auth/invalid-credential':
+                        errMsg = "❌ Неверный email или пароль!";
+                        break;
+                    case 'auth/invalid-email':
+                        errMsg = "❌ Неправильный email!";
+                        break;
+                    case 'auth/too-many-requests':
+                        errMsg = "❌ Слишком много попыток. Подожди минутку.";
+                        break;
+                    case 'auth/network-request-failed':
+                        errMsg = "❌ Проблема с интернетом!";
+                        break;
+                }
+                errorMsg.innerText = errMsg;
+            } finally {
+                btn.innerText = "Войти";
+                btn.disabled = false;
+            }
         };
 
+        // ===== ВЫХОД =====
         window.logout = async () => {
-            if (auth.currentUser) await updateDoc(doc(db, "users", auth.currentUser.uid), { online: false });
-            if (pc) pc.close();
+            if (auth.currentUser) {
+                await updateDoc(doc(db, "users", auth.currentUser.uid), { online: false }).catch(()=>{});
+            }
+            endCall();
             signOut(auth);
         };
 
+        // ===== СЛЕДИМ ЗА АВТОРИЗАЦИЕЙ =====
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 document.getElementById('auth-screen').style.display = 'none';
@@ -181,12 +272,21 @@
                     document.getElementById('my-name-display').innerText = myUserData.displayId;
                     document.getElementById('my-id-text').innerText = "ID: " + myUserData.publicId;
                     document.getElementById('avatar').innerText = myUserData.displayId.charAt(0).toUpperCase();
-                    document.getElementById('my-id-text').onclick = () => { navigator.clipboard.writeText(myUserData.publicId); alert("ID скопирован: " + myUserData.publicId); };
+                    document.getElementById('my-id-text').onclick = () => { 
+                        navigator.clipboard.writeText(myUserData.publicId); 
+                        alert("ID скопирован: " + myUserData.publicId); 
+                    };
                     await updateDoc(doc(db, "users", user.uid), { online: true }).catch(()=>{});
                 } else {
                     const defaultNick = user.email.split('@')[0];
                     const generatedId = generateId();
-                    await setDoc(doc(db, "users", user.uid), { email: user.email, displayId: defaultNick, publicId: generatedId, createdAt: serverTimestamp(), online: true });
+                    await setDoc(doc(db, "users", user.uid), { 
+                        email: user.email, 
+                        displayId: defaultNick, 
+                        publicId: generatedId, 
+                        createdAt: serverTimestamp(), 
+                        online: true 
+                    });
                     myUserData = { displayId: defaultNick, publicId: generatedId };
                     document.getElementById('my-name-display').innerText = defaultNick;
                     document.getElementById('my-id-text').innerText = "ID: " + generatedId;
@@ -198,7 +298,7 @@
                 document.getElementById('chat-screen').style.display = 'none';
                 if (unsubscribeMessages) unsubscribeMessages();
                 if (unsubscribeCalls) unsubscribeCalls();
-                if (pc) { pc.close(); pc = null; }
+                endCall();
             }
         });
 
@@ -217,17 +317,21 @@
         function renderUsers(users) {
             const userList = document.getElementById('user-list');
             userList.innerHTML = "";
-            if (users.length === 0) { userList.innerHTML = '<div style="padding:15px;color:#888;text-align:center;">Никого не найдено</div>'; return; }
+            if (users.length === 0) { 
+                userList.innerHTML = '<div style="padding:15px;color:#888;text-align:center;">Никого не найдено</div>'; 
+                return; 
+            }
             users.forEach((user) => {
                 const div = document.createElement('div');
                 div.className = 'user-item';
                 const statusClass = user.online ? 'user-status' : 'user-status offline';
                 const statusText = user.online ? 'В сети' : 'Не в сети';
+                const initial = user.displayId ? user.displayId.charAt(0).toUpperCase() : '?';
                 div.innerHTML = `
-                    <div style="width:32px;height:32px;border-radius:50%;background:#333;color:white;display:flex;justify-content:center;align-items:center;font-weight:bold;">${user.displayId.charAt(0).toUpperCase()}</div>
+                    <div style="width:32px;height:32px;border-radius:50%;background:#333;color:white;display:flex;justify-content:center;align-items:center;font-weight:bold;">${initial}</div>
                     <div class="user-info">
-                        <div class="user-name">${user.displayId}</div>
-                        <div class="${statusClass}">${statusText} • ${user.publicId}</div>
+                        <div class="user-name">${user.displayId || 'Без имени'}</div>
+                        <div class="${statusClass}">${statusText} • ${user.publicId || ''}</div>
                     </div>`;
                 div.onclick = () => startChat(user.displayId, user.id, div);
                 userList.appendChild(div);
@@ -236,7 +340,10 @@
 
         document.getElementById('search-input').addEventListener('input', (e) => {
             const term = e.target.value.toLowerCase();
-            const filtered = allUsersCache.filter(u => u.displayId.toLowerCase().includes(term) || u.publicId.toLowerCase().includes(term));
+            const filtered = allUsersCache.filter(u => 
+                (u.displayId && u.displayId.toLowerCase().includes(term)) || 
+                (u.publicId && u.publicId.toLowerCase().includes(term))
+            );
             renderUsers(filtered);
         });
 
@@ -269,95 +376,4 @@
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'msg-name';
                     nameSpan.textContent = isMe ? 'Вы' : msg.senderName;
-                    div.appendChild(nameSpan);
-                    div.appendChild(document.createTextNode(msg.text));
-                    chatBox.appendChild(div);
-                });
-                chatBox.scrollTop = chatBox.scrollHeight;
-            });
-        }
-
-        window.sendMessage = async function() {
-            if (!currentChatId) return;
-            const input = document.getElementById('msg-input');
-            const text = input.value.trim();
-            if (!text) return;
-            try {
-                await addDoc(collection(db, "chats", currentChatId, "messages"), {
-                    senderId: auth.currentUser.uid, 
-                    senderName: myUserData ? myUserData.displayId : "Аноним", 
-                    text: text, 
-                    createdAt: serverTimestamp()
-                });
-                input.value = "";
-            } catch (e) { alert("Ошибка отправки"); }
-        };
-
-        // --- ЛОГИКА ЗВОНКОВ ---
-        async function setupCallListener() {
-            if (unsubscribeCalls) unsubscribeCalls();
-            const callsRef = collection(db, "chats", currentChatId, "calls");
-            
-            unsubscribeCalls = onSnapshot(callsRef, async (snapshot) => {
-                for (const change of snapshot.docChanges()) {
-                    if (change.type !== "added") continue;
-                    const data = change.doc.data();
-                    if (data.senderId === auth.currentUser.uid) continue; // Игнорируем свои
-
-                    if (data.type === 'offer') {
-                        if (confirm("Входящий звонок! Принять?")) {
-                            await startCall(false, data.sdp);
-                        }
-                    } else if (data.type === 'answer' && pc) {
-                        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-                    } else if (data.type === 'candidate' && pc) {
-                        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                    }
-                }
-            });
-        }
-
-        document.getElementById('call-btn').addEventListener('click', async () => {
-            if (!currentChatId) return alert("Выберите чат!");
-            if (pc) {
-                endCall();
-                return;
-            }
-            await startCall(true);
-        });
-
-        async function startCall(isCaller, offerSdp = null) {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                pc = new RTCPeerConnection(rtcConfig);
-                
-                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-                
-                pc.ontrack = (event) => {
-                    const audio = new Audio();
-                    audio.srcObject = event.streams[0];
-                    audio.play();
-                };
-
-                pc.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        addDoc(collection(db, "chats", currentChatId, "calls"), {
-                            type: 'candidate',
-                            candidate: event.candidate,
-                            senderId: auth.currentUser.uid,
-                            createdAt: serverTimestamp()
-                        });
-                    }
-                };
-
-                pc.onconnectionstatechange = () => {
-                    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                        endCall();
-                    }
-                };
-
-                if (isCaller) {
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                } else {
-     
+                    div.appendChild(nameSpa

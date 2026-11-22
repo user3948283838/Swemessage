@@ -20,13 +20,20 @@
         button:disabled { opacity: 0.6; cursor: not-allowed; }
         .btn-secondary { background: #3c3c3c; color: #e0e0e0; }
         .btn-secondary:hover:not(:disabled) { background: #4c4c4c; }
+        .btn-google { background: #4285F4 !important; color: white !important; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .btn-google:hover:not(:disabled) { background: #3367D6 !important; }
+        .divider { text-align: center; color: #666; font-size: 12px; margin: 10px 0; position: relative; }
+        .divider::before, .divider::after { content: ""; position: absolute; top: 50%; width: 40%; height: 1px; background: #3c3c3c; }
+        .divider::before { left: 0; }
+        .divider::after { right: 0; }
         #error-msg { color: #cf6679; text-align: center; font-size: 14px; margin-top: 10px; min-height: 20px; font-weight: 500; }
         
         #chat-screen { display: none; width: 100%; height: 100vh; max-width: 1200px; background: rgba(30, 30, 30, 0.85); backdrop-filter: blur(10px); }
         #sidebar { width: 320px; background: rgba(37, 37, 37, 0.9); border-right: 1px solid #333; display: flex; flex-direction: column; }
         #sidebar-header { padding: 15px; border-bottom: 1px solid #333; }
         #my-profile { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
-        #avatar { width: 40px; height: 40px; border-radius: 50%; background: #bb86fc; color: black; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 18px; }
+        #avatar { width: 40px; height: 40px; border-radius: 50%; background: #bb86fc; color: black; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 18px; overflow: hidden; }
+        #avatar img { width: 100%; height: 100%; object-fit: cover; }
         #my-id-text { font-size: 12px; color: #888; cursor: pointer; }
         #search-input { width: 100%; padding: 10px 15px; background: #333; border: none; border-radius: 20px; color: white; font-size: 13px; outline: none; }
         #user-list { flex-grow: 1; overflow-y: auto; }
@@ -62,11 +69,18 @@
 
     <div id="auth-screen">
         <h1>Swemessage</h1>
+        
+        <button id="googleBtn" class="btn-google" onclick="loginWithGoogle()">
+            🔵 Войти через Google
+        </button>
+        
+        <div class="divider">или</div>
+        
         <input type="text" id="regNickname" placeholder="Ваш Никнейм">
         <input type="email" id="emailInput" placeholder="Email">
         <input type="password" id="passwordInput" placeholder="Пароль (мин. 6 символов)">
         <button id="regBtn" onclick="registerUser()">Зарегистрироваться</button>
-        <button id="loginBtn" class="btn-secondary" onclick="loginUser()">Войти</button>
+        <button id="loginBtn" class="btn-secondary" onclick="loginUser()">Войти по почте</button>
         <p id="error-msg"></p>
     </div>
 
@@ -106,7 +120,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, setDoc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
-        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCwtSgIwcl3WQckITAoovh-U6sqa7bNzT4",
@@ -142,7 +156,34 @@
             return 'id_' + Math.random().toString(36).substr(2, 6);
         }
 
-        // ===== РЕГИСТРАЦИЯ С ПОНЯТНЫМИ ОШИБКАМИ =====
+        // ===== ВХОД ЧЕРЕЗ GOOGLE =====
+        window.loginWithGoogle = async () => {
+            const errorMsg = document.getElementById('error-msg');
+            const btn = document.getElementById('googleBtn');
+            errorMsg.innerText = "";
+            
+            if (btn) { btn.innerText = "⏳ Вход..."; btn.disabled = true; }
+            
+            try {
+                const provider = new GoogleAuthProvider();
+                await signInWithPopup(auth, provider);
+            } catch (e) {
+                console.error("Ошибка входа через Google:", e);
+                let errMsg = "❌ Ошибка: " + e.message;
+                if (e.code === 'auth/popup-blocked') {
+                    errMsg = "❌ Браузер заблокировал окно! Разреши всплывающие окна для сайта.";
+                } else if (e.code === 'auth/popup-closed-by-user') {
+                    errMsg = "⚠️ Ты закрыл окно входа.";
+                } else if (e.code === 'auth/unauthorized-domain') {
+                    errMsg = "❌ Этот домен не добавлен в Firebase! Добавь его в Authentication → Settings → Authorized domains.";
+                }
+                errorMsg.innerText = errMsg;
+            } finally {
+                if (btn) { btn.innerHTML = "🔵 Войти через Google"; btn.disabled = false; }
+            }
+        };
+
+        // ===== РЕГИСТРАЦИЯ ПО ПОЧТЕ =====
         window.registerUser = async () => {
             const nick = document.getElementById('regNickname').value.trim();
             const email = document.getElementById('emailInput').value.trim();
@@ -156,12 +197,10 @@
                 errorMsg.innerText = "⚠️ Заполни все поля!";
                 return;
             }
-
             if (pass.length < 6) {
                 errorMsg.innerText = "⚠️ Пароль должен быть минимум 6 символов!";
                 return;
             }
-
             if (!email.includes('@') || !email.includes('.')) {
                 errorMsg.innerText = "⚠️ Неправильный email!";
                 return;
@@ -184,21 +223,11 @@
                 console.error("Ошибка регистрации:", e);
                 let errMsg = "Ошибка: " + e.message;
                 switch(e.code) {
-                    case 'auth/email-already-in-use':
-                        errMsg = "❌ Этот email уже зарегистрирован!";
-                        break;
-                    case 'auth/invalid-email':
-                        errMsg = "❌ Неправильный email!";
-                        break;
-                    case 'auth/weak-password':
-                        errMsg = "❌ Слабый пароль (минимум 6 символов)!";
-                        break;
-                    case 'auth/network-request-failed':
-                        errMsg = "❌ Проблема с интернетом!";
-                        break;
-                    case 'permission-denied':
-                        errMsg = "❌ Нет доступа! Проверь правила Firestore.";
-                        break;
+                    case 'auth/email-already-in-use': errMsg = "❌ Этот email уже зарегистрирован!"; break;
+                    case 'auth/invalid-email': errMsg = "❌ Неправильный email!"; break;
+                    case 'auth/weak-password': errMsg = "❌ Слабый пароль (минимум 6 символов)!"; break;
+                    case 'auth/network-request-failed': errMsg = "❌ Проблема с интернетом!"; break;
+                    case 'permission-denied': errMsg = "❌ Нет доступа! Проверь правила Firestore."; break;
                 }
                 errorMsg.innerText = errMsg;
             } finally {
@@ -207,7 +236,7 @@
             }
         };
 
-        // ===== ВХОД =====
+        // ===== ВХОД ПО ПОЧТЕ =====
         window.loginUser = async () => {
             const email = document.getElementById('emailInput').value.trim();
             const pass = document.getElementById('passwordInput').value;
@@ -232,21 +261,14 @@
                     case 'auth/user-not-found':
                     case 'auth/wrong-password':
                     case 'auth/invalid-credential':
-                        errMsg = "❌ Неверный email или пароль!";
-                        break;
-                    case 'auth/invalid-email':
-                        errMsg = "❌ Неправильный email!";
-                        break;
-                    case 'auth/too-many-requests':
-                        errMsg = "❌ Слишком много попыток. Подожди минутку.";
-                        break;
-                    case 'auth/network-request-failed':
-                        errMsg = "❌ Проблема с интернетом!";
-                        break;
+                        errMsg = "❌ Неверный email или пароль!"; break;
+                    case 'auth/invalid-email': errMsg = "❌ Неправильный email!"; break;
+                    case 'auth/too-many-requests': errMsg = "❌ Слишком много попыток. Подожди минутку."; break;
+                    case 'auth/network-request-failed': errMsg = "❌ Проблема с интернетом!"; break;
                 }
                 errorMsg.innerText = errMsg;
             } finally {
-                btn.innerText = "Войти";
+                btn.innerText = "Войти по почте";
                 btn.disabled = false;
             }
         };
@@ -271,30 +293,43 @@
                     myUserData = userDoc.data();
                     document.getElementById('my-name-display').innerText = myUserData.displayId;
                     document.getElementById('my-id-text').innerText = "ID: " + myUserData.publicId;
-                    document.getElementById('avatar').innerText = myUserData.displayId.charAt(0).toUpperCase();
+                    // Аватарка: если есть фото из Google — ставим его, иначе первую букву ника
+                    const avatarEl = document.getElementById('avatar');
+                    if (myUserData.photoURL) {
+                        avatarEl.innerHTML = `<img src="${myUserData.photoURL}" alt="avatar">`;
+                    } else {
+                        avatarEl.innerHTML = myUserData.displayId.charAt(0).toUpperCase();
+                    }
                     document.getElementById('my-id-text').onclick = () => { 
                         navigator.clipboard.writeText(myUserData.publicId); 
                         alert("ID скопирован: " + myUserData.publicId); 
                     };
                     await updateDoc(doc(db, "users", user.uid), { online: true }).catch(()=>{});
                 } else {
-                    const defaultNick = user.email.split('@')[0];
+                    // Новый пользователь — берём имя и фото из Google, если входили через него
+                    const defaultNick = user.displayName || user.email.split('@')[0];
                     const generatedId = generateId();
                     await setDoc(doc(db, "users", user.uid), { 
                         email: user.email, 
                         displayId: defaultNick, 
                         publicId: generatedId, 
+                        photoURL: user.photoURL || null,
                         createdAt: serverTimestamp(), 
                         online: true 
                     });
-                    myUserData = { displayId: defaultNick, publicId: generatedId };
+                    myUserData = { displayId: defaultNick, publicId: generatedId, photoURL: user.photoURL || null };
                     document.getElementById('my-name-display').innerText = defaultNick;
                     document.getElementById('my-id-text').innerText = "ID: " + generatedId;
-                    document.getElementById('avatar').innerText = defaultNick.charAt(0).toUpperCase();
+                    const avatarEl = document.getElementById('avatar');
+                    if (user.photoURL) {
+                        avatarEl.innerHTML = `<img src="${user.photoURL}" alt="avatar">`;
+                    } else {
+                        avatarEl.innerHTML = defaultNick.charAt(0).toUpperCase();
+                    }
                 }
                 loadUsers();
             } else {
-                document.getElementById('auth-screen').style.display = 'flex';
+                document.getElementById('auth-screen').style.display = 'block';
                 document.getElementById('chat-screen').style.display = 'none';
                 if (unsubscribeMessages) unsubscribeMessages();
                 if (unsubscribeCalls) unsubscribeCalls();
@@ -305,9 +340,9 @@
         async function loadUsers() {
             onSnapshot(collection(db, "users"), (snapshot) => {
                 allUsersCache = [];
-                snapshot.forEach((doc) => {
-                    if (doc.id !== auth.currentUser.uid) {
-                        allUsersCache.push({ id: doc.id, ...doc.data() });
+                snapshot.forEach((docSnap) => {
+                    if (docSnap.id !== auth.currentUser.uid) {
+                        allUsersCache.push({ id: docSnap.id, ...docSnap.data() });
                     }
                 });
                 renderUsers(allUsersCache);
@@ -327,53 +362,6 @@
                 const statusClass = user.online ? 'user-status' : 'user-status offline';
                 const statusText = user.online ? 'В сети' : 'Не в сети';
                 const initial = user.displayId ? user.displayId.charAt(0).toUpperCase() : '?';
-                div.innerHTML = `
-                    <div style="width:32px;height:32px;border-radius:50%;background:#333;color:white;display:flex;justify-content:center;align-items:center;font-weight:bold;">${initial}</div>
-                    <div class="user-info">
-                        <div class="user-name">${user.displayId || 'Без имени'}</div>
-                        <div class="${statusClass}">${statusText} • ${user.publicId || ''}</div>
-                    </div>`;
-                div.onclick = () => startChat(user.displayId, user.id, div);
-                userList.appendChild(div);
-            });
-        }
-
-        document.getElementById('search-input').addEventListener('input', (e) => {
-            const term = e.target.value.toLowerCase();
-            const filtered = allUsersCache.filter(u => 
-                (u.displayId && u.displayId.toLowerCase().includes(term)) || 
-                (u.publicId && u.publicId.toLowerCase().includes(term))
-            );
-            renderUsers(filtered);
-        });
-
-        function startChat(otherUserNick, otherUserUid, btnElement) {
-            document.querySelectorAll('.user-item').forEach(b => b.classList.remove('active'));
-            if(btnElement) btnElement.classList.add('active');
-            currentChatId = [auth.currentUser.uid, otherUserUid].sort().join('_');
-            document.getElementById('current-chat-name').innerText = otherUserNick;
-            document.getElementById('chat-header').style.display = 'flex';
-            document.getElementById('input-area').style.display = 'flex';
-            loadMessages();
-            setupCallListener();
-        }
-
-        function loadMessages() {
-            if (unsubscribeMessages) unsubscribeMessages();
-            const chatBox = document.getElementById('chat-box');
-            chatBox.innerHTML = "Загрузка...";
-            const messagesRef = collection(db, "chats", currentChatId, "messages");
-            const q = query(messagesRef, orderBy("createdAt", "asc"));
-            
-            unsubscribeMessages = onSnapshot(q, (snapshot) => {
-                chatBox.innerHTML = "";
-                if (snapshot.empty) chatBox.innerHTML = '<div class="empty-chat">Напишите первое сообщение!</div>';
-                snapshot.forEach((doc) => {
-                    const msg = doc.data();
-                    const isMe = msg.senderId === auth.currentUser.uid;
-                    const div = document.createElement('div');
-                    div.className = `msg ${isMe ? 'my' : 'other'}`;
-                    const nameSpan = document.createElement('span');
-                    nameSpan.className = 'msg-name';
-                    nameSpan.textContent = isMe ? 'Вы' : msg.senderName;
-                    div.appendChild(nameSpa
+                const avatarHtml = user.photoURL 
+                    ? `<img src="${user.photoURL}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;">`
+                    : 
